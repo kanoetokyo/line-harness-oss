@@ -2,7 +2,6 @@ import { Hono, type Context } from 'hono';
 import { createLiffQueryReader } from '../lib/liff-query.js';
 import {
   getFriendByLineUserId,
-  getFriendByLineUserIdForAccount,
   createUser,
   getUserByEmail,
   linkFriendToUser,
@@ -31,6 +30,7 @@ import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import { pushImmediateFirstStep } from '../services/immediate-first-step.js';
 import { notifyAffiliateFriendAdd } from '../services/affiliate-notifier.js';
 import { verifyCallerLineUserId } from '../services/liff-auth.js';
+import { resolveLiffFriend } from '../services/liff-friend.js';
 import { awardActivityMileage } from '../services/activity-mileage.js';
 import { safeRedirectTarget } from '../lib/safe-redirect.js';
 import { isReservedRef } from '../lib/reserved-refs.js';
@@ -1231,11 +1231,9 @@ liffRoutes.post('/api/liff/link', async (c) => {
     const matchedAccount = matchedLoginChannelId
       ? dbAccounts.find((a) => a.login_channel_id === matchedLoginChannelId) ?? null
       : null;
-    const friend = await getFriendByLineUserIdForAccount(
-      db, lineUserId, matchedAccount?.id ?? null,
-    );
+    const friend = await resolveLiffFriend(db, { lineUserId, account: matchedAccount });
     if (!friend) {
-      return c.json({ success: false, error: 'Friend not found' }, 404);
+      return c.json({ success: false, error: 'LINE公式アカウントを友だち追加してから、もう一度開いてください。' }, 403);
     }
 
     let linkedUserId = (friend as unknown as Record<string, unknown>).user_id as string | null;
