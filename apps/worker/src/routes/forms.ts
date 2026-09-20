@@ -16,7 +16,8 @@ import {
 } from '@line-crm/db';
 import { enrollFriendInScenario } from '@line-crm/db';
 import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
-import { verifyCallerLineUserId } from '../services/liff-auth.js';
+import { verifyCallerLineIdentity, verifyCallerLineUserId } from '../services/liff-auth.js';
+import { resolveLiffFriend } from '../services/liff-friend.js';
 import { pushViaHarnessProxy } from '../services/line-proxy-send.js';
 import { dispatchLineProxyLocally } from '../services/local-line-proxy.js';
 import type {
@@ -388,15 +389,15 @@ forms.post('/api/forms/:id/opened', async (c) => {
 forms.post('/api/forms/:id/partial', async (c) => {
   try {
     const body = await c.req.json<{ data?: Record<string, unknown> }>();
-    const lineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
-    if (!lineUserId) {
+    const identity = await verifyCallerLineIdentity(c.req.header('Authorization'), c.env);
+    if (!identity) {
       return c.json({ success: false, error: 'Unauthorized' }, 401);
     }
 
-    const friend = await getFriendByLineUserId(c.env.DB, lineUserId);
+    const friend = await resolveLiffFriend(c.env.DB, identity);
 
     if (!friend) {
-      return c.json({ success: false, error: 'Friend not found' }, 404);
+      return c.json({ success: false, error: 'LINE公式アカウントを友だち追加してから、もう一度お試しください。' }, 403);
     }
 
     // Save survey data to friend metadata (merge with existing)
@@ -432,13 +433,15 @@ forms.post('/api/forms/:id/submit', async (c) => {
 
     const submissionData = body.data ?? {};
 
-    const lineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
-    if (!lineUserId) {
+    const identity = await verifyCallerLineIdentity(c.req.header('Authorization'), c.env);
+    if (!identity) {
       return c.json({ success: false, error: 'Unauthorized' }, 401);
     }
-    const friend = await getFriendByLineUserId(c.env.DB, lineUserId);
+    // Resolve here too: rich-menu forms may be submitted before the browser's
+    // best-effort /liff/link request completes (or when that request failed).
+    const friend = await resolveLiffFriend(c.env.DB, identity);
     if (!friend) {
-      return c.json({ success: false, error: 'Friend not found' }, 404);
+      return c.json({ success: false, error: 'LINE公式アカウントを友だち追加してから、もう一度お試しください。' }, 403);
     }
     const friendId = friend.id;
 

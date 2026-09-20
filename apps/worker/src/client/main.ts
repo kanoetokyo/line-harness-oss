@@ -302,13 +302,18 @@ async function linkAndAddFlow() {
     }
 
     // 4. Wait for UUID linking to complete
-    await linkPromise;
+    const linkResult = await linkPromise;
 
     // 5. Friendship check — the key decision point
     if (!friendship.friendFlag) {
       // Not a friend yet → show friend-add button
       showFriendAdd(profile);
     } else {
+      // A campaign entry must not show success when linking/registration
+      // failed: that used to silently drop the first seminar message.
+      if (!linkResult?.ok) {
+        throw new Error('受付情報を確認できませんでした。通信環境を確認して、このリンクをもう一度開いてください。');
+      }
       // Already a friend — check for form param
       const formParam = new URLSearchParams(window.location.search).get('form');
       if (formParam) {

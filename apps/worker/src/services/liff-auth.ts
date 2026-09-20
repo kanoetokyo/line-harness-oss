@@ -3,17 +3,22 @@
 // route modules (e.g. events.ts) can import & share it. booking.ts keeps its
 // own copy for now to avoid touching production-stable code in this PR.
 
-import { getLineAccounts } from '@line-crm/db';
+import { getLineAccounts, type LineAccount } from '@line-crm/db';
 
 export interface VerifyEnv {
   LINE_LOGIN_CHANNEL_ID?: string;
   DB: D1Database;
 }
 
-export async function verifyCallerLineUserId(
+export interface VerifiedLiffIdentity {
+  lineUserId: string;
+  account: LineAccount | null;
+}
+
+export async function verifyCallerLineIdentity(
   authHeader: string | undefined,
   env: VerifyEnv,
-): Promise<string | null> {
+): Promise<VerifiedLiffIdentity | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
   const idToken = authHeader.slice('Bearer '.length).trim();
   if (!idToken) return null;
@@ -33,8 +38,20 @@ export async function verifyCallerLineUserId(
     });
     if (res.ok) {
       const verified = (await res.json()) as { sub?: string };
-      if (verified.sub) return verified.sub;
+      if (verified.sub) {
+        return {
+          lineUserId: verified.sub,
+          account: dbAccounts.find((a) => a.login_channel_id === channelId) ?? null,
+        };
+      }
     }
   }
   return null;
+}
+
+export async function verifyCallerLineUserId(
+  authHeader: string | undefined,
+  env: VerifyEnv,
+): Promise<string | null> {
+  return (await verifyCallerLineIdentity(authHeader, env))?.lineUserId ?? null;
 }

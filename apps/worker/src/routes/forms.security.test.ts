@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getFriendByLineUserId: vi.fn(),
   createFormSubmission: vi.fn(),
   verifyCallerLineUserId: vi.fn(),
+  resolveLiffFriend: vi.fn(),
   getLineAccountById: vi.fn(),
   dispatchLineProxyLocally: vi.fn(),
 }));
@@ -34,7 +35,13 @@ vi.mock('@line-crm/db', () => ({
 
 vi.mock('../services/liff-auth.js', () => ({
   verifyCallerLineUserId: mocks.verifyCallerLineUserId,
+  verifyCallerLineIdentity: async (...args: unknown[]) => {
+    const lineUserId = await mocks.verifyCallerLineUserId(...args);
+    return lineUserId ? { lineUserId, account: null } : null;
+  },
 }));
+
+vi.mock('../services/liff-friend.js', () => ({ resolveLiffFriend: mocks.resolveLiffFriend }));
 
 vi.mock('../services/friend-tag-attach.js', () => ({
   attachTagAndFireSideEffects: vi.fn(),
@@ -103,6 +110,8 @@ beforeEach(() => {
   mocks.getFormById.mockResolvedValue({ ...baseForm });
   mocks.verifyCallerLineUserId.mockResolvedValue(null);
   mocks.getFriendByLineUserId.mockResolvedValue(null);
+  mocks.resolveLiffFriend.mockImplementation((db, identity) =>
+    mocks.getFriendByLineUserId(db, identity.lineUserId));
   mocks.createFormSubmission.mockImplementation(async (_db, input) => ({
     id: 'submission-1',
     form_id: input.formId,
@@ -162,6 +171,36 @@ describe('public form representation', () => {
 });
 
 describe('LIFF identity enforcement', () => {
+  test('accepts an existing LINE follower resolved on first Harness visit', async () => {
+    mocks.verifyCallerLineUserId.mockResolvedValue('line-existing');
+    mocks.resolveLiffFriend.mockResolvedValue({ id: 'friend-imported', metadata: '{}' });
+    mocks.getFormById.mockResolvedValue({
+      ...baseForm, fields: '[]', on_submit_webhook_url: null,
+      on_submit_tag_id: null, on_submit_scenario_id: null, save_to_metadata: 0,
+    });
+    const { bindings } = env();
+    const res = await app().request('/api/forms/form-1/submit', {
+      method: 'POST', headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ friendId: 'spoofed', data: { name: '申込テスト', apps: ['ChatGPT'] } }),
+    }, bindings);
+    expect(res.status).toBe(201);
+    expect(mocks.resolveLiffFriend).toHaveBeenCalledWith(bindings.DB, { lineUserId: 'line-existing', account: null });
+    expect(mocks.createFormSubmission).toHaveBeenCalledWith(bindings.DB, expect.objectContaining({ friendId: 'friend-imported' }));
+  });
+
+  test('does not save an application when LINE profile registration is denied', async () => {
+    mocks.verifyCallerLineUserId.mockResolvedValue('line-unknown');
+    mocks.resolveLiffFriend.mockResolvedValue(null);
+    const { bindings } = env();
+    const res = await app().request('/api/forms/form-1/submit', {
+      method: 'POST', headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: {} }),
+    }, bindings);
+    expect(res.status).toBe(403);
+    expect(mocks.createFormSubmission).not.toHaveBeenCalled();
+    expect((await res.json() as { error: string }).error).toContain('友だち追加');
+  });
+
   test('stores every required AI consultation field including the selected meeting slot', async () => {
     mocks.getFormById.mockResolvedValue({
       ...baseForm,
